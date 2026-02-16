@@ -53,7 +53,11 @@ def save_state(state):
 def fetch_rates():
     """Fetches current exchange rates from AwesomeAPI."""
     try:
-        response = requests.get(API_URL, timeout=10)
+        # User-Agent spoofing to avoid 429 errors
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(API_URL, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
