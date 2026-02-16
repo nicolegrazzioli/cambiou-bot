@@ -1,4 +1,3 @@
-# aaaaaaaaaaaaaaaaaaaaaaa
 name: Currency Monitor
 
 on:
@@ -12,15 +11,15 @@ permissions:
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: "3.9"
 
       - name: Install dependencies
         run: |
@@ -38,11 +37,12 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
           
+          # Check if there are changes in last_run.json
           if [[ -n $(git status --porcelain last_run.json) ]]; then
-            echo "Changes detected. Committing..."
+            echo "Changes detected in last_run.json. Committing..."
             git add last_run.json
             git commit -m "Update exchange rate history [skip ci]"
             git push
           else
-            echo "No changes. Skipping commit."
+            echo "No changes in last_run.json. Skipping commit."
           fi
