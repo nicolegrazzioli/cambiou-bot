@@ -1,11 +1,13 @@
 import os
 import json
+import time
 import requests
-import sys
 
 # Configuration
 API_URL = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL"
 STATE_FILE = "last_run.json"
+MAX_RETRIES = 3
+INITIAL_BACKOFF = 5  # seconds
 
 # Load environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -51,18 +53,34 @@ def save_state(state):
         print(f"Error saving state file: {e}")
 
 def fetch_rates():
-    """Fetches current exchange rates from AwesomeAPI."""
-    try:
-        # User-Agent spoofing to avoid 429 errors
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(API_URL, headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching rates: {e}")
-        sys.exit(1)
+    """Fetches current exchange rates from AwesomeAPI with retry on 429."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            print(f"Fetching rates (attempt {attempt}/{MAX_RETRIES})...")
+            response = requests.get(API_URL, headers=headers, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 429 and attempt < MAX_RETRIES:
+                wait_time = INITIAL_BACKOFF * (2 ** (attempt - 1))
+                print(f"Rate limited (429). Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+            else:
+                print(f"Error fetching rates: {e}")
+                return None
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching rates: {e}")
+            if attempt < MAX_RETRIES:
+                wait_time = INITIAL_BACKOFF * (2 ** (attempt - 1))
+                print(f"Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                return None
+    return None
 
 def format_currency(value):
     """Formats float to currency string with 2 decimal places."""
@@ -80,6 +98,11 @@ def main():
          print("Warning: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set. Notifications will store state but not send messages.")
 
     current_rates_data = fetch_rates()
+    
+    if current_rates_data is None:
+        print("Could not fetch rates after retries. Exiting gracefully.")
+        return
+    
     last_run_state = load_state()
     
     # Process USD
