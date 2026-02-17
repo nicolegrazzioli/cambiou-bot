@@ -9,7 +9,7 @@ Este projeto é um agente inteligente de monitoramento de taxas de câmbio (USD/
 - **Monitoramento Duplo**: Acompanha cotações de Dólar (USD) e Euro (EUR) em relação ao Real (BRL).
 - **Resiliência de API**: Sistema de **Dual-API** que tenta obter dados da AwesomeAPI e, em caso de falha (como erro 429 de limite de requisições), utiliza a `open.er-api.com` como fallback.
 - **Lógica de Notificação Inteligente**: Só envia mensagens se houver alteração no preço, indicando a tendência (📈 SUBIU ou 📉 CAIU).
-- **Simulação Wise**: Calcula automaticamente o valor aproximado para remessas (Taxa + 2%).
+- **Simulação Wise**: Calcula automaticamente o valor aproximado para remessas (IOF + spread).
 - **Automação Total**: Executado via GitHub Actions sem necessidade de servidor próprio.
 - **Persistência de Estado**: Salva o histórico da última execução no próprio repositório (`last_run.json`).
 
@@ -31,7 +31,7 @@ O núcleo do bot segue este fluxo:
 1.  **Requisição com Retry**: Tenta acessar a API primária com um algoritmo de *exponential backoff* (espera tempos crescentes em caso de erro).
 2.  **Fallback**: Se a API primária falhar após 3 tentativas, aciona a API secundária.
 3.  **Comparação**: Lê o arquivo `last_run.json` para obter a cotação da execução anterior.
-4.  **Cálculo**: Se o preço mudou, calcula o "Preço Wise" (Cotação + 2%).
+4.  **Cálculo**: Se o preço mudou, calcula o "Preço Wise" (Cotação + IOF + spread).
 5.  **Notificação**: Formata uma mensagem em Markdown e envia para o chat configurado.
 6.  **Atualização**: Sobrescreve o `last_run.json` com os novos valores para a próxima comparação.
 
@@ -47,12 +47,12 @@ O workflow do GitHub Actions:
 
 ### Pré-requisitos
 1.  Um **Bot no Telegram** (criado via [@BotFather](https://t.me/botfather)).
-2.  O seu **Chat ID** (pode ser obtido via [@userinfobot](https://t.me/userinfobot)).
+2.  O **Chat ID** (pode ser obtido via [@userinfobot](https://t.me/userinfobot)).
 
 ### Configuração no GitHub
-No seu repositório, vá em `Settings > Secrets and variables > Actions` e adicione:
+No repositório, vá em `Settings > Secrets and variables > Actions` e adicione:
 - `TELEGRAM_TOKEN`: O token fornecido pelo BotFather.
-- `TELEGRAM_CHAT_ID`: O ID do seu chat ou grupo.
+- `TELEGRAM_CHAT_ID`: O ID do chat ou grupo.
 
 ### Rodando Localmente
 ```bash
@@ -75,6 +75,3 @@ python main.py
 > **Wise: R$ 5.83**
 
 ---
-
-## 📄 Licença
-Este projeto está sob a licença MIT. Sinta-se à vontade para usar e modificar.
