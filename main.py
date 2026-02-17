@@ -4,10 +4,13 @@ import time
 import requests
 
 # Configuration
-API_URL = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL"
 STATE_FILE = "last_run.json"
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 5  # seconds
+
+# API URLs (primary + fallback)
+AWESOME_API_URL = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL"
+FALLBACK_API_URL = "https://open.er-api.com/v6/latest/BRL"
 
 # Load environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -52,34 +55,89 @@ def save_state(state):
     except IOError as e:
         print(f"Error saving state file: {e}")
 
-def fetch_rates():
-    """Fetches current exchange rates from AwesomeAPI with retry on 429."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
+def _request_with_retry(url, headers=None):
+    """Makes a GET request with retry logic for transient errors."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            print(f"Fetching rates (attempt {attempt}/{MAX_RETRIES})...")
-            response = requests.get(API_URL, headers=headers, timeout=15)
+            print(f"  Attempt {attempt}/{MAX_RETRIES} -> {url[:60]}...")
+            response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
             if response.status_code == 429 and attempt < MAX_RETRIES:
                 wait_time = INITIAL_BACKOFF * (2 ** (attempt - 1))
-                print(f"Rate limited (429). Waiting {wait_time}s before retry...")
+                print(f"  Rate limited (429). Waiting {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                print(f"Error fetching rates: {e}")
+                print(f"  HTTP error: {e}")
                 return None
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching rates: {e}")
+            print(f"  Request error: {e}")
             if attempt < MAX_RETRIES:
                 wait_time = INITIAL_BACKOFF * (2 ** (attempt - 1))
-                print(f"Retrying in {wait_time}s...")
+                print(f"  Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 return None
+    return None
+
+def fetch_rates_awesome():
+    """Fetches rates from AwesomeAPI and returns normalized dict."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    data = _request_with_retry(AWESOME_API_URL, headers=headers)
+    if data is None:
+        return None
+    
+    result = {}
+    usd = data.get("USDBRL")
+    eur = data.get("EURBRL")
+    if usd:
+        result["USD"] = float(usd["bid"])
+    if eur:
+        result["EUR"] = float(eur["bid"])
+    return result if result else None
+
+def fetch_rates_fallback():
+    """Fetches rates from open.er-api.com (free, no key needed).
+    
+    This API returns rates FROM BRL, so we invert to get the price
+    of 1 USD/EUR in BRL.
+    """
+    data = _request_with_retry(FALLBACK_API_URL)
+    if data is None or data.get("result") != "success":
+        return None
+    
+    rates = data.get("rates", {})
+    result = {}
+    
+    # API gives BRL -> X, we need X -> BRL (i.e., 1/rate)
+    usd_rate = rates.get("USD")
+    eur_rate = rates.get("EUR")
+    
+    if usd_rate and usd_rate > 0:
+        result["USD"] = round(1.0 / usd_rate, 4)
+    if eur_rate and eur_rate > 0:
+        result["EUR"] = round(1.0 / eur_rate, 4)
+    
+    return result if result else None
+
+def fetch_rates():
+    """Fetches rates trying AwesomeAPI first, then fallback."""
+    print("Trying primary API (AwesomeAPI)...")
+    rates = fetch_rates_awesome()
+    if rates:
+        print(f"Got rates from AwesomeAPI: {rates}")
+        return rates
+    
+    print("Primary API failed. Trying fallback (open.er-api.com)...")
+    rates = fetch_rates_fallback()
+    if rates:
+        print(f"Got rates from fallback API: {rates}")
+        return rates
+    
+    print("All APIs failed.")
     return None
 
 def format_currency(value):
@@ -95,52 +153,26 @@ def main():
     
     # Check for secrets early
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-         print("Warning: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set. Notifications will store state but not send messages.")
+         print("Warning: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set.")
 
-    current_rates_data = fetch_rates()
+    rates = fetch_rates()
     
-    if current_rates_data is None:
-        print("Could not fetch rates after retries. Exiting gracefully.")
+    if rates is None:
+        print("Could not fetch rates from any source. Exiting gracefully.")
         return
     
     last_run_state = load_state()
     
-    # Process USD
-    usd_data = current_rates_data.get("USDBRL")
-    if usd_data:
-        process_currency("USD", usd_data, last_run_state)
-        
-    # Process EUR
-    eur_data = current_rates_data.get("EURBRL")
-    if eur_data:
-        process_currency("EUR", eur_data, last_run_state)
+    # Process each currency
+    for currency_code, current_price in rates.items():
+        process_currency(currency_code, current_price, last_run_state)
 
-    # Save the new state with current values
-    # We update the state object with the current values so it's ready for next run
-    # Note: process_currency updates the state object in place if needed, 
-    # but strictly speaking we want to save the *current* rates as the "last run" for the *next* execution.
-    # The requirement says: "comparar o preço atual com o preço da última execução."
-    # So we should save the current rates now.
-    
-    new_state = {
-        "USD": float(usd_data["bid"]) if usd_data else last_run_state.get("USD"),
-        "EUR": float(eur_data["bid"]) if eur_data else last_run_state.get("EUR")
-    }
-    
-    # Remove None values
-    new_state = {k: v for k, v in new_state.items() if v is not None}
-    
-    save_state(new_state)
+    # Save current rates for next run comparison
+    save_state(rates)
     print("Agent finished successfully.")
 
-def process_currency(currency_code, data, last_state):
+def process_currency(currency_code, current_price, last_state):
     """Processes a single currency: compares, notifies."""
-    try:
-        current_price = float(data["bid"])
-    except ValueError:
-        print(f"Error parsing price for {currency_code}")
-        return
-
     last_price = last_state.get(currency_code)
     
     print(f"Checking {currency_code}: Current={current_price}, Last={last_price}")
