@@ -42,7 +42,11 @@ jobs:
             echo "Changes detected in last_run.json. Committing..."
             git add last_run.json
             git commit -m "Update exchange rate history [skip ci]"
-            git push
+            
+            # puxa as mudanças mais recentes do servidor e aplica o commit do bot por cima
+            git pull --rebase origin main
+            
+            git push origin main
           else
             echo "No changes in last_run.json. Skipping commit."
           fi
